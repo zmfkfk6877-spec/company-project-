@@ -1,0 +1,51 @@
+name: phishing-quiz
+services:
+  database:
+    image: postgres:17-alpine
+    pull_policy: never
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:?Run setup-env.sh first}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Run setup-env.sh first}
+      POSTGRES_DB: ${POSTGRES_DB:-phishingquiz}
+    volumes:
+      - database:/var/lib/postgresql/data
+    healthcheck:
+      test: [CMD-SHELL, 'pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB']
+      interval: 5s
+      timeout: 3s
+      retries: 30
+    restart: unless-stopped
+  application:
+    image: phishing-quiz:local
+    pull_policy: never
+    env_file: .env
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@database:5432/${POSTGRES_DB:-phishingquiz}
+      UPLOAD_DIR: /app/uploads
+      TRUST_PROXY: 'true'
+    depends_on:
+      database:
+        condition: service_healthy
+    volumes:
+      - uploads:/app/uploads
+    command: [sh, -c, 'npm run db:migrate && node server.js']
+    healthcheck:
+      test: [CMD, node, -e, "fetch('http://127.0.0.1:3000/api/events').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 5s
+      timeout: 4s
+      retries: 30
+    restart: unless-stopped
+  nginx:
+    image: nginx:1.28-alpine
+    pull_policy: never
+    ports:
+      - '80:80'
+    volumes:
+      - ./nginx/default.conf:/etc/nginx/conf.d/default.conf:ro,Z
+    depends_on:
+      application:
+        condition: service_healthy
+    restart: unless-stopped
+volumes:
+  database:
+  uploads:

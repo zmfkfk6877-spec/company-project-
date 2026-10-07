@@ -1,0 +1,146 @@
+generator client {
+ provider = "prisma-client-js"
+}
+datasource db {
+ provider = "postgresql"
+ url = env("DATABASE_URL")
+}
+model Admin {
+ id String @id @default(cuid())
+ username String @unique
+ passwordHash String
+ role String @default("SUPERADMIN")
+ createdAt DateTime @default(now())
+ sessions Session[]
+}
+model Event {
+ id String @id @default(cuid())
+ title String
+ description String @default("")
+ startsAt DateTime
+ endsAt DateTime
+ durationSeconds Int @default(300)
+ correctPoints Int @default(2)
+ wrongPoints Int @default(-2)
+ easyRatio Int @default(30)
+ normalRatio Int @default(40)
+ hardRatio Int @default(30)
+ legitimateRatio Int @default(40)
+ maxAttempts Int @default(1)
+ retentionDays Int @default(30)
+ departments String[] @default([])
+ allowCustomDepartment Boolean @default(true)
+ explanationsPublished Boolean @default(false)
+ active Boolean @default(true)
+ createdAt DateTime @default(now())
+ updatedAt DateTime @updatedAt
+ participants Participant[]
+ attempts Attempt[]
+}
+model Participant {
+ id String @id @default(cuid())
+ eventId String
+ event Event @relation(fields:[eventId],references:[id],onDelete:Cascade)
+ name String
+ department String
+ phoneEncrypted String
+ identityHash String
+ consentAt DateTime @default(now())
+ createdAt DateTime @default(now())
+ attempts Attempt[]
+ sessions Session[]
+ @@unique([eventId,identityHash])
+}
+model Question {
+ id String @id @default(cuid())
+ type String
+ difficulty String
+ subject String
+ senderName String
+ senderEmail String
+ recipient String @default("임직원")
+ sentTime String @default("오늘 09:00")
+ body String
+ links Json @default("[]")
+ attachments String[] @default([])
+ image String?
+ expectedAnswer String
+ explanation String
+ risks String[] @default([])
+ active Boolean @default(true)
+ createdAt DateTime @default(now())
+ updatedAt DateTime @updatedAt
+}
+model Attempt {
+ id String @id @default(cuid())
+ participantId String
+ participant Participant @relation(fields:[participantId],references:[id],onDelete:Cascade)
+ eventId String
+ event Event @relation(fields:[eventId],references:[id],onDelete:Cascade)
+ startedAt DateTime
+ expiresAt DateTime
+ finishedAt DateTime?
+ status String @default("ACTIVE")
+ correctPoints Int
+ wrongPoints Int
+ answeredCount Int @default(0)
+ correctCount Int @default(0)
+ wrongCount Int @default(0)
+ score Int @default(0)
+ accuracy Float @default(0)
+ totalResponseMs Int @default(0)
+ suspiciousCount Int @default(0)
+ assigned AssignedQuestion[]
+ answers Answer[]
+ @@index([eventId,status,score,accuracy,correctCount,totalResponseMs])
+}
+model AssignedQuestion {
+ id String @id @default(cuid())
+ attemptId String
+ attempt Attempt @relation(fields:[attemptId],references:[id],onDelete:Cascade)
+ questionId String
+ position Int
+ snapshot Json
+ shownAt DateTime?
+ answer Answer?
+ @@unique([attemptId,position])
+ @@unique([attemptId,questionId])
+}
+model Answer {
+ id String @id @default(cuid())
+ attemptId String
+ attempt Attempt @relation(fields:[attemptId],references:[id],onDelete:Cascade)
+ assignedId String @unique
+ assigned AssignedQuestion @relation(fields:[assignedId],references:[id],onDelete:Cascade)
+ selectedAnswer String
+ expectedAnswer String
+ correct Boolean
+ questionStartedAt DateTime
+ answeredAt DateTime
+ responseTime Int
+}
+model Session {
+ id String @id @default(cuid())
+ tokenHash String @unique
+ adminId String?
+ admin Admin? @relation(fields:[adminId],references:[id],onDelete:Cascade)
+ participantId String?
+ participant Participant? @relation(fields:[participantId],references:[id],onDelete:Cascade)
+ expiresAt DateTime
+ createdAt DateTime @default(now())
+}
+model AuditLog {
+ id String @id @default(cuid())
+ actor String
+ action String
+ target String
+ ip String
+ success Boolean
+ createdAt DateTime @default(now())
+ @@index([createdAt])
+}
+model RateLimit {
+ key String @id
+ count Int @default(1)
+ resetAt DateTime
+}

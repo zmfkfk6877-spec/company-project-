@@ -1,0 +1,13 @@
+# Linux x86_64 / Node.js 24 artifacts; use scripts/package-image.sh.
+FROM node:24-bookworm AS trusted-tls
+FROM node:24-bookworm-slim
+WORKDIR /app
+COPY --from=trusted-tls /usr/lib/x86_64-linux-gnu/libssl.so.3 /usr/lib/x86_64-linux-gnu/libssl.so.3
+COPY --from=trusted-tls /usr/lib/x86_64-linux-gnu/libcrypto.so.3 /usr/lib/x86_64-linux-gnu/libcrypto.so.3
+ENV NODE_ENV=production PORT=3000 HOSTNAME=0.0.0.0 UPLOAD_DIR=/app/uploads
+# The packaging script flattens Next's standalone output and excludes secrets/build compilers.
+COPY --chown=node:node . /app
+RUN mkdir -p /app/uploads && chown node:node /app/uploads
+USER node
+EXPOSE 3000
+CMD ["node", "server.js"]
