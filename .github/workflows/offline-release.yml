@@ -1,0 +1,86 @@
+name: Build Rocky 8 offline download
+
+on:
+  push:
+    branches: [main]
+    paths: [.github/workflows/offline-release.yml]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: rocky8-offline-release
+  cancel-in-progress: false
+
+jobs:
+  package:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+      - name: Build the application without operating secrets
+        run: |
+          npm ci
+          npm run db:generate
+          npm run build
+          bash scripts/package-image.sh
+          docker pull postgres:17-alpine
+          docker pull nginx:1.28-alpine
+      - name: Assemble the offline package
+        run: |
+          mkdir -p release/phishing-quiz-offline/{nginx,scripts/offline,docs}
+          cp compose.offline.yaml .env.example release/phishing-quiz-offline/
+          cp nginx/default.conf nginx/https.conf.example release/phishing-quiz-offline/nginx/
+          cp scripts/offline/* release/phishing-quiz-offline/scripts/offline/
+          cp docs/offline/BEGINNER-GUIDE.ko.md docs/offline/offline-guide.html release/phishing-quiz-offline/docs/
+          printf '%s\n' 'Rocky Linux 8 x86_64 설치 안내서는 docs/BEGINNER-GUIDE.ko.md를 읽으세요.' > release/phishing-quiz-offline/README.txt
+          docker save -o release/phishing-quiz-offline/images.tar phishing-quiz:local postgres:17-alpine nginx:1.28-alpine
+          (
+            cd release/phishing-quiz-offline
+            find . -type f ! -name SHA256SUMS -print0 | sort -z | xargs -0 sha256sum > SHA256SUMS
+          )
+      - name: Test first install and all 50 answers
+        env:
+          COMPOSE_PROJECT_NAME: offline-release-check
+        run: |
+          quiz_password=$(openssl rand -hex 24)
+          quiz_password="${quiz_password}Aa9!"
+          echo "::add-mask::$quiz_password"
+          cd release/phishing-quiz-offline
+          printf 'http://localhost\nreleaseadmin\n%s\n%s\n' "$quiz_password" "$quiz_password" | bash scripts/offline/setup-env.sh
+          bash scripts/offline/start.sh
+          cd ../..
+          node --env-file=release/phishing-quiz-offline/.env scripts/http-smoke.mjs http://localhost
+      - name: Remove test data and operating secrets
+        if: always()
+        env:
+          COMPOSE_PROJECT_NAME: offline-release-check
+        run: |
+          if test -f release/phishing-quiz-offline/.env; then
+            docker compose --project-directory release/phishing-quiz-offline -f release/phishing-quiz-offline/compose.offline.yaml down -v
+            rm release/phishing-quiz-offline/.env
+          fi
+      - name: Compress verified download files
+        run: |
+          test ! -e release/phishing-quiz-offline/.env
+          tar --owner=0 --group=0 -C release -czf release/phishing-quiz-offline.tar.gz phishing-quiz-offline
+          git archive --format=zip --prefix=company-project-/ -o release/phishing-quiz-source.zip HEAD
+          cp docs/offline/offline-guide.pdf docs/offline/offline-guide.html release/
+          (
+            cd release
+            sha256sum phishing-quiz-offline.tar.gz phishing-quiz-source.zip offline-guide.pdf offline-guide.html > download-SHA256SUMS.txt
+          )
+      - name: Upload the tested files to a draft release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          if ! gh release view offline-rocky8-v1 > /dev/null 2>&1; then
+            gh release create offline-rocky8-v1 --draft --target "$GITHUB_SHA" --title 'Rocky Linux 8 폐쇄망 설치 파일' --notes 'offline-guide.pdf를 먼저 읽고 phishing-quiz-offline.tar.gz를 받으세요. Docker 설치 RPM은 별도로 준비해야 합니다.'
+          fi
+          gh release upload offline-rocky8-v1 release/phishing-quiz-offline.tar.gz release/phishing-quiz-source.zip release/offline-guide.pdf release/offline-guide.html release/download-SHA256SUMS.txt --clobber
+          gh release edit offline-rocky8-v1 --target "$GITHUB_SHA"
